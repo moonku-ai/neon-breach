@@ -1,0 +1,81 @@
+// Keyboard and mouse, and the pointer lock that turns the mouse into look. Plain
+// browser APIs only. Keys are a live set; pressed() answers edge-triggered keys
+// (buy, reload, grenade) and consumes them, so one press never fires twice.
+// The buy menu runs unlocked: opening it releases the pointer, closing it asks
+// for the lock back.
+export function createInput(canvas, onLockChange) {
+  const keys = new Set();
+  const pressedKeys = new Set();
+  const state = { keys, locked: false, firing: false, aiming: false, lookX: 0, lookY: 0 };
+
+  function setKey(event, down) {
+    if (down) {
+      if (!keys.has(event.code)) pressedKeys.add(event.code);
+      keys.add(event.code);
+    } else {
+      keys.delete(event.code);
+    }
+    if (event.code === 'Space') event.preventDefault();
+  }
+
+  window.addEventListener('keydown', (event) => setKey(event, true));
+  window.addEventListener('keyup', (event) => setKey(event, false));
+  window.addEventListener('blur', () => { keys.clear(); state.firing = false; });
+  window.addEventListener('mousemove', (event) => {
+    if (!state.locked) return;
+    state.lookX += event.movementX;
+    state.lookY += event.movementY;
+  });
+  window.addEventListener('mousedown', (event) => {
+    if (!state.locked) return;
+    if (event.button === 0) {
+      state.firing = true;
+      pressedKeys.add('MouseLeft'); // edge: semi-auto weapons fire once per click
+    }
+    if (event.button === 2) state.aiming = true;
+  });
+  window.addEventListener('mouseup', (event) => {
+    if (event.button === 0) state.firing = false;
+    if (event.button === 2) state.aiming = false;
+  });
+  window.addEventListener('contextmenu', (event) => {
+    if (state.locked) event.preventDefault();
+  });
+  document.addEventListener('pointerlockchange', () => {
+    state.locked = document.pointerLockElement === canvas;
+    if (!state.locked) {
+      keys.clear();
+      state.firing = false;
+      state.aiming = false;
+    }
+    onLockChange(state.locked);
+  });
+
+  return {
+    state,
+    requestLock() {
+      // Chrome refuses a lock requested straight after an exit; the caller
+      // retries on the next user gesture, so a failure here is not fatal.
+      const result = canvas.requestPointerLock();
+      if (result && typeof result.catch === 'function') result.catch(() => {});
+    },
+    releaseLock() {
+      if (document.pointerLockElement) document.exitPointerLock();
+    },
+    takeLook() {
+      const x = state.lookX;
+      const y = state.lookY;
+      state.lookX = 0;
+      state.lookY = 0;
+      return { x, y };
+    },
+    pressed(code) {
+      if (!pressedKeys.has(code)) return false;
+      pressedKeys.delete(code);
+      return true;
+    },
+    consumeAll() {
+      pressedKeys.clear();
+    },
+  };
+}
